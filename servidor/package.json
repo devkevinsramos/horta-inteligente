@@ -1,0 +1,12 @@
+{
+  "name": "horta-inteligente-servidor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Servidor HTTP e painel da Horta Inteligente (FATEC Itaquera)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test testes-api.test.js"
+  },
+  "engines": {"node": ">=20"}
+}

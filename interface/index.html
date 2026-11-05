@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#155f43">
+  <title>Horta Inteligente | Painel de Irrigação</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/script.js" defer></script>
+</head>
+<body>
+  <header class="cabecalho">
+    <div class="cabecalho-interior">
+      <div class="marca"><span class="marca-icone" aria-hidden="true">🌱</span><div><strong>Horta Inteligente</strong><small>FATEC Itaquera · Painel de irrigação</small></div></div>
+      <div id="conexao" class="conexao offline" role="status"><span class="bolinha"></span> ESP32 desconectado</div>
+    </div>
+  </header>
+  <main class="conteudo">
+    <div class="abertura"><div><span class="sobretitulo">MONITORAMENTO DE SOLO</span><h1>Visão geral da irrigação</h1><p>Dados recebidos do ESP32 simulado no Wokwi, atualizados automaticamente.</p></div><span class="nota">Potenciômetro = umidade <b>simulada</b></span></div>
+    <div id="alerta" class="alerta" role="alert">Aguardando a primeira telemetria do ESP32. Nenhuma leitura fictícia será exibida.</div>
+    <section class="grade" aria-label="Medições">
+      <article class="cartao medida"><div class="cartao-topo"><h2>Umidade do solo</h2><span class="simbolo" aria-hidden="true">💧</span></div><div class="valor"><span id="umidade">--</span><span id="unidade">%</span></div><div class="progresso" role="progressbar" aria-label="Umidade do solo" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="barra-externa"><div class="barra" id="barra"></div></div><p id="estado-solo" class="descricao">Sem leitura atual</p><p class="dado-tecnico" id="adc">ADC: --</p></article>
+      <article class="cartao"><div class="cartao-topo"><h2>Estado da irrigação</h2><span class="simbolo" aria-hidden="true">🚿</span></div><div id="irrigacao" class="estado-grande">Indisponível</div><span id="modo" class="etiqueta">Modo: --</span><p id="bloqueio" class="descricao">Bloqueio: --</p><p class="dado-tecnico" id="leitura-status">Leitura do sensor: --</p></article>
+      <article class="cartao comunicacao"><div class="cartao-topo"><h2>Comunicação</h2><span class="simbolo" aria-hidden="true">📡</span></div><div id="texto-conexao" class="estado-grande">Sem conexão</div><p class="descricao">Última atualização recebida:</p><p id="ultima-atualizacao" class="data">Nunca</p><p class="dado-tecnico" id="pendentes">Comandos pendentes: 0</p><p class="dado-tecnico">ESP32: horta-esp32-01</p></article>
+    </section>
+    <section class="grade-inferior">
+      <article class="cartao controles"><div class="cartao-topo"><h2>Controle da irrigação</h2><span class="simbolo" aria-hidden="true">⚙️</span></div><p class="descricao">Comandos só são enviados ao dispositivo conectado. A segurança local do ESP32 sempre tem prioridade.</p>
+        <label for="token">Token de controle do servidor</label><input type="password" id="token" autocomplete="off" placeholder="Informe CONTROL_TOKEN" spellcheck="false"><p class="ajuda">O token não é gravado no navegador. Mantenha-o privado.</p>
+        <div class="grupo-botoes"><button data-comando="AUTO" class="principal">Automático</button><button data-comando="MANUAL">Manual</button><button data-comando="LIGAR" class="ligar">Ligar</button><button data-comando="DESLIGAR" class="desligar">Desligar</button></div>
+        <div class="separador"></div><p class="legenda">Segurança e testes da simulação</p><div class="grupo-botoes secundario"><button data-comando="RESET">Rearmar bloqueio</button><button data-comando="FALHA">Simular falha</button><button data-comando="NORMAL">Restaurar sensor</button></div>
+        <p id="resposta-comando" class="resposta" role="status" aria-live="polite">Nenhum comando enviado.</p><p id="ultimo-comando" class="dado-tecnico">Última confirmação: --</p>
+      </article>
+      <article class="cartao historico"><div class="cartao-topo"><h2>Histórico de eventos</h2><span class="simbolo" aria-hidden="true">🕓</span></div><p class="descricao">Alterações de estado e comandos registrados pelo servidor. Histórico em memória, limitado aos últimos 100 eventos.</p><ol id="lista-historico" class="eventos"><li class="sem-eventos">Aguardando eventos do ESP32.</li></ol></article>
+    </section>
+    <footer>Horta Inteligente · Projeto acadêmico de IoT · Limites demonstrativos: liga abaixo de 40%, desliga a partir de 70%, tempo máximo de 30s.</footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "author": "Horta Inteligente - FATEC Itaquera",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-esp32-devkit-v1",
+      "id": "esp32",
+      "top": 8,
+      "left": 40,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-potentiometer",
+      "id": "potSolo",
+      "top": -108,
+      "left": -155,
+      "attrs": { "value": "500" }
+    },
+    {
+      "type": "wokwi-relay-module",
+      "id": "rele",
+      "top": -113,
+      "left": 310,
+      "attrs": { "transistor": "pnp" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "resistorLed",
+      "top": 94,
+      "left": 421,
+      "rotate": 90,
+      "attrs": { "value": "330" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "ledIrrigacao",
+      "top": 207,
+      "left": 430,
+      "attrs": { "color": "blue", "label": "Irrigacao acionada" }
+    }
+  ],
+  "connections": [
+    [ "potSolo:VCC", "esp32:3V3", "red", [] ],
+    [ "potSolo:GND", "esp32:GND.1", "black", [] ],
+    [ "potSolo:SIG", "esp32:D34", "green", [] ],
+    [ "rele:VCC", "esp32:3V3", "red", [] ],
+    [ "rele:GND", "esp32:GND.2", "black", [] ],
+    [ "rele:IN", "esp32:D26", "orange", [] ],
+    [ "rele:COM", "esp32:3V3", "red", [] ],
+    [ "rele:NO", "resistorLed:1", "blue", [] ],
+    [ "resistorLed:2", "ledIrrigacao:A", "blue", [] ],
+    [ "ledIrrigacao:C", "esp32:GND.2", "black", [] ],
+    [ "esp32:TX0", "$serialMonitor:RX", "", [] ],
+    [ "esp32:RX0", "$serialMonitor:TX", "", [] ]
+  ],
+  "dependencies": {}
+}
