@@ -1,38 +1,103 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#155f43">
-  <title>Horta Inteligente | Painel de Irrigação</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102c25">
+  <meta name="description" content="Monitoramento e controle da horta inteligente conectada ao ESP32.">
+  <title>Horta Inteligente — Central de controle</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/script.js" defer></script>
 </head>
 <body>
-  <header class="cabecalho">
-    <div class="cabecalho-interior">
-      <div class="marca"><span class="marca-icone" aria-hidden="true">🌱</span><div><strong>Horta Inteligente</strong><small>FATEC Itaquera · Painel de irrigação</small></div></div>
-      <div id="conexao" class="conexao offline" role="status"><span class="bolinha"></span> ESP32 desconectado</div>
+  <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="ic-leaf" viewBox="0 0 24 24"><path d="M20 4c-7 0-13 2-15 8-2 6 3 10 8 8 6-2 7-9 7-16Z"/><path d="M4 21c2-6 6-10 12-13"/></symbol>
+    <symbol id="ic-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.3"/><rect x="14" y="3" width="7" height="7" rx="1.3"/><rect x="3" y="14" width="7" height="7" rx="1.3"/><rect x="14" y="14" width="7" height="7" rx="1.3"/></symbol>
+    <symbol id="ic-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+    <symbol id="ic-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.1M3 12h.1M3 18h.1" stroke-width="3"/></symbol>
+    <symbol id="ic-cog" viewBox="0 0 24 24"><path d="M4 8.5 6 5l3.5 1L12 3l3 3 3.5-1L20 8.5 18 12l2 3.5L18 19l-3.5-1-2.5 3-3-3-3.5 1L4 15.5 6 12 4 8.5Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="ic-drop" viewBox="0 0 24 24"><path d="M12 2C9 7 5 11 5 15a7 7 0 0 0 14 0c0-4-4-8-7-13Z"/></symbol>
+    <symbol id="ic-power" viewBox="0 0 24 24"><path d="M12 2v10M6 5.4a9 9 0 1 0 12 0"/></symbol>
+    <symbol id="ic-wifi" viewBox="0 0 24 24"><path d="M2 8c6-5.5 14-5.5 20 0M5 12c4-3.5 10-3.5 14 0M9 16c2-1.5 4-1.5 6 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="ic-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></symbol>
+    <symbol id="ic-shield" viewBox="0 0 24 24"><path d="m12 2 8 4v6c0 6-4 9-8 10-4-1-8-4-8-10V6l8-4Z"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="ic-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="ic-activity" viewBox="0 0 24 24"><path d="M2 12h4l3-7 5 14 3-7h5"/></symbol>
+    <symbol id="ic-refresh" viewBox="0 0 24 24"><path d="M20 9a8 8 0 1 0 1 5M20 3v6h-6"/></symbol>
+    <symbol id="ic-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 11v6M12 7v.2"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Navegação principal">
+      <div class="brand">
+        <span class="brand-mark"><svg><use href="#ic-leaf"></use></svg></span>
+        <div><strong>horta<span>•</span>lab</strong><small>PAINEL INTELIGENTE</small></div>
+      </div>
+      <div class="side-label">ESPAÇO DE TRABALHO</div>
+      <nav class="side-nav" aria-label="Páginas">
+        <button class="nav-item active" data-page="resumo" aria-current="page"><svg><use href="#ic-grid"></use></svg><span>Visão geral</span></button>
+        <button class="nav-item" data-page="controle"><svg><use href="#ic-sliders"></use></svg><span>Controle</span></button>
+        <button class="nav-item" data-page="historico"><svg><use href="#ic-list"></use></svg><span>Histórico</span></button>
+        <button class="nav-item" data-page="sistema"><svg><use href="#ic-cog"></use></svg><span>Sistema</span></button>
+      </nav>
+      <div class="side-bottom">
+        <div class="side-notice"><svg><use href="#ic-shield"></use></svg><b>Segurança ativa</b><p>O ESP32 mantém o controle local mesmo sem internet.</p></div>
+        <div class="side-footer">Projeto IoT • FATEC Itaquera <span>v2.0</span></div>
+      </div>
+    </aside>
+
+    <div class="main-area">
+      <header class="topbar">
+        <div class="breadcrumb"><span>Horta Inteligente</span><span class="slash">/</span><strong id="breadcrumb-page">Visão geral</strong></div>
+        <div class="topbar-right"><div id="hora-atual" class="top-time"></div><div class="status-chip offline" id="status-conexao" role="status" aria-live="polite"><span class="status-dot"></span><span id="status-conexao-texto">ESP32 offline</span></div></div>
+      </header>
+      <main class="main-content">
+        <div id="alerta" class="notice notice-warning" role="status" aria-live="polite"><svg><use href="#ic-info"></use></svg><span id="alerta-texto">Aguardando o primeiro envio de dados do ESP32.</span></div>
+
+        <section class="view active" id="view-resumo" aria-labelledby="titulo-resumo">
+          <div class="page-heading"><div><div class="eyebrow">DASHBOARD / TEMPO REAL</div><h1 id="titulo-resumo">Visão geral</h1><p>O que está acontecendo na sua horta, em um só lugar.</p></div><button class="btn btn-quiet" id="atualizar-resumo"><svg><use href="#ic-refresh"></use></svg> Atualizar agora</button></div>
+          <div class="hero"><div class="hero-content"><div class="hero-eyebrow"><span class="hero-spark"></span> IRRIGAÇÃO INTELIGENTE</div><h2>Cuide de cada gota.<br>O resto é com a gente.</h2><p>Monitore a umidade do solo e acione a irrigação com segurança, diretamente do seu painel.</p><button class="btn btn-white" data-ir-controle>Ir para o controle <svg><use href="#ic-arrow"></use></svg></button></div><div class="hero-art" aria-hidden="true"><span class="hero-circle c1"></span><span class="hero-circle c2"></span><span class="hero-circle c3"></span><span class="hero-center"><svg><use href="#ic-leaf"></use></svg></span><i class="hero-pin pin1"></i><i class="hero-pin pin2"></i></div></div>
+          <div class="stats-grid">
+            <article class="stat-card"><div class="stat-top"><span>Umidade do solo</span><span class="stat-icon blue"><svg><use href="#ic-drop"></use></svg></span></div><div class="stat-number"><strong id="umidade">—</strong><span>%</span></div><div class="meter" role="progressbar" aria-label="Umidade do solo" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="umidade-meter"><span id="umidade-bar"></span></div><p id="solo-descricao">Aguardando leitura</p></article>
+            <article class="stat-card"><div class="stat-top"><span>Irrigação</span><span class="stat-icon green"><svg><use href="#ic-power"></use></svg></span></div><div class="stat-status" id="irrigacao-resumo">Indisponível</div><div class="state-label"><span class="mini-dot" id="pump-dot"></span><span id="irrigacao-subtexto">Sem dados do ESP32</span></div><p>Estado real informado pelo dispositivo</p></article>
+            <article class="stat-card"><div class="stat-top"><span>Modo de operação</span><span class="stat-icon purple"><svg><use href="#ic-sliders"></use></svg></span></div><div class="stat-status" id="modo-resumo">—</div><div class="state-label"><span id="modo-descricao">Aguardando conexão</span></div><p>Selecione outro modo na página Controle</p></article>
+            <article class="stat-card"><div class="stat-top"><span>Dispositivo</span><span class="stat-icon orange"><svg><use href="#ic-wifi"></use></svg></span></div><div class="stat-status" id="dispositivo-resumo">Offline</div><div class="state-label"><span id="ultima-atualizacao-resumo">Sem sincronização</span></div><p>ESP32 • horta-esp32-01</p></article>
+          </div>
+          <div class="dashboard-grid">
+            <article class="panel"><div class="panel-head"><div><div class="panel-kicker">ACOMPANHAMENTO</div><h3>Umidade ao vivo</h3></div><span class="tiny-tag">Sessão atual</span></div><p class="panel-subtitle">Leituras reais recebidas enquanto esta página está aberta.</p><div class="chart-wrap"><svg id="grafico" viewBox="0 0 640 200" preserveAspectRatio="none" aria-label="Gráfico das leituras de umidade"><path class="chart-grid" d="M0 20H640 M0 70H640 M0 120H640 M0 170H640"/><polyline id="grafico-linha" class="chart-line" points=""/></svg><div class="chart-empty" id="grafico-vazio">O gráfico aparecerá após receber leituras do ESP32.</div></div><div class="axis-legend"><span>0%</span><span>Umidade (%)</span><span>100%</span></div></article>
+            <article class="panel panel-activity"><div class="panel-head"><div><div class="panel-kicker">ATUALIZAÇÕES</div><h3>Atividade recente</h3></div><button class="text-link" data-ir-historico>Ver tudo <svg><use href="#ic-arrow"></use></svg></button></div><div id="atividade-recente" class="activity-feed"><p class="empty-text">Nenhum evento registrado.</p></div></article>
+          </div>
+        </section>
+
+        <section class="view" id="view-controle" aria-labelledby="titulo-controle" hidden>
+          <div class="page-heading"><div><div class="eyebrow">OPERAÇÃO / COMANDOS</div><h1 id="titulo-controle">Central de controle</h1><p>Acione a irrigação e acompanhe por que ela liga ou desliga.</p></div><span class="pill-soft" id="controle-modo">Modo indisponível</span></div>
+          <div class="control-layout">
+            <div class="control-main">
+              <article class="panel control-card"><div class="panel-head"><div><div class="panel-kicker">CONTROLE DA BOMBA</div><h3>Irrigação manual</h3></div><span class="control-icon"><svg><use href="#ic-power"></use></svg></span></div><div class="pump-display"><span class="pump-illustration"><svg><use href="#ic-drop"></use></svg></span><div><span>ESTADO ATUAL</span><strong id="controle-irrigacao">Aguardando ESP32</strong><small id="controle-irrigacao-info">Os comandos precisam ser confirmados pelo dispositivo.</small></div></div><div class="action-buttons"><button class="btn btn-start" data-comando="LIGAR"><svg><use href="#ic-power"></use></svg> Iniciar irrigação</button><button class="btn btn-stop" data-comando="DESLIGAR"><svg><use href="#ic-power"></use></svg> Parar irrigação</button></div><div class="tip-box"><svg><use href="#ic-info"></use></svg><p><b>Como funciona:</b> Iniciar já ativa o modo manual automaticamente. Parar mantém o sistema em manual para não religar sozinho. Umidade alta, falha de sensor e limite de tempo continuam protegidos.</p></div><div class="command-response" id="resposta-comando" aria-live="polite" role="status">Nenhum comando enviado nesta sessão.</div></article>
+              <article class="panel"><div class="panel-head"><div><div class="panel-kicker">AUTOMAÇÃO</div><h3>Modo de operação</h3></div></div><div class="mode-grid"><button class="mode-option" data-comando="AUTO"><span class="mode-glyph"><svg><use href="#ic-activity"></use></svg></span><strong>Automático</strong><small>Liga quando o solo seca e desliga com umidade suficiente.</small><span class="mode-indicator" id="indicador-auto">Selecionar modo</span></button><button class="mode-option" data-comando="MANUAL"><span class="mode-glyph"><svg><use href="#ic-sliders"></use></svg></span><strong>Manual</strong><small>Você decide quando iniciar e parar, respeitando as proteções.</small><span class="mode-indicator" id="indicador-manual">Selecionar modo</span></button></div><div class="thresholds"><div><span>Liga automaticamente abaixo de</span><strong>40%</strong></div><div><span>Desliga ao atingir</span><strong>70%</strong></div></div></article>
+            </div>
+            <div class="control-side">
+              <article class="panel auth-panel"><div class="panel-head"><div><div class="panel-kicker">ACESSO SEGURO</div><h3>Autorização</h3></div><svg class="heading-icon"><use href="#ic-shield"></use></svg></div><label for="token">Token de controle</label><div class="token-wrap"><input id="token" type="password" placeholder="Digite CONTROL_TOKEN" autocomplete="off" spellcheck="false" aria-describedby="token-ajuda"><button type="button" id="mostrar-token" aria-label="Mostrar token">Mostrar</button></div><p id="token-ajuda">Use o <b>CONTROL_TOKEN</b> definido no Render. Não é salvo no navegador.</p></article>
+              <article class="panel safety-panel"><div class="panel-head"><div><div class="panel-kicker">SEGURANÇA</div><h3>Proteções do sistema</h3></div><svg class="heading-icon"><use href="#ic-shield"></use></svg></div><div class="safety-row"><span>Sensor</span><strong id="status-sensor">Sem leitura</strong></div><div class="safety-row"><span>Bloqueio de tempo</span><strong id="status-bloqueio">—</strong></div><div class="safety-row"><span>Motivo da última parada</span><strong id="motivo-parada">—</strong></div><div class="safety-timer"><div><span>Tempo restante por ciclo</span><strong id="tempo-restante">—</strong></div><div class="meter"><span id="tempo-restante-bar"></span></div><p>Limite de segurança: <span id="tempo-maximo">2 min</span> por acionamento contínuo.</p></div><button class="btn btn-outline" data-comando="RESET"><svg><use href="#ic-refresh"></use></svg> Rearmar proteção</button></article>
+              <article class="panel"><div class="panel-head"><div><div class="panel-kicker">TESTES DO PROJETO</div><h3>Simular sensor</h3></div></div><p class="panel-subtitle">Ferramentas apenas para demonstração no Wokwi. Simular falha interrompe a irrigação.</p><div class="test-buttons"><button class="btn btn-outline" data-comando="FALHA">Simular falha</button><button class="btn btn-outline" data-comando="NORMAL">Restaurar sensor</button></div></article>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-historico" aria-labelledby="titulo-historico" hidden>
+          <div class="page-heading"><div><div class="eyebrow">LOG / EVENTOS</div><h1 id="titulo-historico">Histórico de eventos</h1><p>Rastreie mudanças de estado, comandos e avisos do sistema.</p></div></div>
+          <article class="panel"><div class="panel-head"><div><div class="panel-kicker">ÚLTIMOS 100 EVENTOS</div><h3>Registro de atividades</h3></div><span class="tiny-tag">Memória do servidor</span></div><div id="lista-historico" class="full-feed"><p class="empty-text">Nenhum evento registrado.</p></div></article>
+        </section>
+
+        <section class="view" id="view-sistema" aria-labelledby="titulo-sistema" hidden>
+          <div class="page-heading"><div><div class="eyebrow">DIAGNÓSTICO / CONEXÃO</div><h1 id="titulo-sistema">Status do sistema</h1><p>Informações técnicas para conferir a integração Render ↔ Wokwi.</p></div></div>
+          <div class="system-grid"><article class="panel"><div class="panel-head"><div><div class="panel-kicker">DISPOSITIVO</div><h3>ESP32</h3></div></div><dl class="detail-list"><div><dt>Identificador</dt><dd>horta-esp32-01</dd></div><div><dt>Conexão</dt><dd id="sistema-conexao">Desconectado</dd></div><div><dt>Última telemetria</dt><dd id="sistema-atualizacao">Nunca</dd></div><div><dt>ADC</dt><dd id="sistema-adc">—</dd></div><div><dt>Comandos pendentes</dt><dd id="sistema-pendentes">0</dd></div></dl></article>
+          <article class="panel"><div class="panel-head"><div><div class="panel-kicker">COMANDOS</div><h3>Última operação</h3></div></div><dl class="detail-list"><div><dt>Comando enviado</dt><dd id="sistema-comando">Nenhum</dd></div><div><dt>Confirmação</dt><dd id="sistema-confirmacao">—</dd></div><div><dt>Modo</dt><dd id="sistema-modo">—</dd></div><div><dt>Falha simulada</dt><dd id="sistema-falha">—</dd></div></dl></article></div>
+          <article class="panel system-help"><div class="panel-head"><div><div class="panel-kicker">COMO CONFERIR</div><h3>O sistema não está respondendo?</h3></div></div><p>Verifique se o Web Service do Render está no ar, se o Wokwi está em execução e se o <code>DEVICE_TOKEN</code> configurado no Wokwi é exatamente igual ao do Render. O <code>CONTROL_TOKEN</code> é uma segunda chave, usada apenas no painel.</p><p>Se o ESP32 aparecer offline, consulte o Monitor Serial do Wokwi: respostas HTTP <code>401</code> indicam token incorreto e falhas negativas de HTTP costumam indicar problemas de rede ou tempo de resposta. <code>/api/health</code> valida apenas o servidor, não o dispositivo.</p><a href="/api/health" target="_blank" rel="noopener">Consultar saúde da API <svg><use href="#ic-arrow"></use></svg></a></article>
+        </section>
+        <footer class="footer">Horta Inteligente <span>•</span> Protótipo acadêmico IoT <span>•</span> Leituras simuladas por potenciômetro no Wokwi</footer>
+      </main>
     </div>
-  </header>
-  <main class="conteudo">
-    <div class="abertura"><div><span class="sobretitulo">MONITORAMENTO DE SOLO</span><h1>Visão geral da irrigação</h1><p>Dados recebidos do ESP32 simulado no Wokwi, atualizados automaticamente.</p></div><span class="nota">Potenciômetro = umidade <b>simulada</b></span></div>
-    <div id="alerta" class="alerta" role="alert">Aguardando a primeira telemetria do ESP32. Nenhuma leitura fictícia será exibida.</div>
-    <section class="grade" aria-label="Medições">
-      <article class="cartao medida"><div class="cartao-topo"><h2>Umidade do solo</h2><span class="simbolo" aria-hidden="true">💧</span></div><div class="valor"><span id="umidade">--</span><span id="unidade">%</span></div><div class="progresso" role="progressbar" aria-label="Umidade do solo" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="barra-externa"><div class="barra" id="barra"></div></div><p id="estado-solo" class="descricao">Sem leitura atual</p><p class="dado-tecnico" id="adc">ADC: --</p></article>
-      <article class="cartao"><div class="cartao-topo"><h2>Estado da irrigação</h2><span class="simbolo" aria-hidden="true">🚿</span></div><div id="irrigacao" class="estado-grande">Indisponível</div><span id="modo" class="etiqueta">Modo: --</span><p id="bloqueio" class="descricao">Bloqueio: --</p><p class="dado-tecnico" id="leitura-status">Leitura do sensor: --</p></article>
-      <article class="cartao comunicacao"><div class="cartao-topo"><h2>Comunicação</h2><span class="simbolo" aria-hidden="true">📡</span></div><div id="texto-conexao" class="estado-grande">Sem conexão</div><p class="descricao">Última atualização recebida:</p><p id="ultima-atualizacao" class="data">Nunca</p><p class="dado-tecnico" id="pendentes">Comandos pendentes: 0</p><p class="dado-tecnico">ESP32: horta-esp32-01</p></article>
-    </section>
-    <section class="grade-inferior">
-      <article class="cartao controles"><div class="cartao-topo"><h2>Controle da irrigação</h2><span class="simbolo" aria-hidden="true">⚙️</span></div><p class="descricao">Comandos só são enviados ao dispositivo conectado. A segurança local do ESP32 sempre tem prioridade.</p>
-        <label for="token">Token de controle do servidor</label><input type="password" id="token" autocomplete="off" placeholder="Informe CONTROL_TOKEN" spellcheck="false"><p class="ajuda">O token não é gravado no navegador. Mantenha-o privado.</p>
-        <div class="grupo-botoes"><button data-comando="AUTO" class="principal">Automático</button><button data-comando="MANUAL">Manual</button><button data-comando="LIGAR" class="ligar">Ligar</button><button data-comando="DESLIGAR" class="desligar">Desligar</button></div>
-        <div class="separador"></div><p class="legenda">Segurança e testes da simulação</p><div class="grupo-botoes secundario"><button data-comando="RESET">Rearmar bloqueio</button><button data-comando="FALHA">Simular falha</button><button data-comando="NORMAL">Restaurar sensor</button></div>
-        <p id="resposta-comando" class="resposta" role="status" aria-live="polite">Nenhum comando enviado.</p><p id="ultimo-comando" class="dado-tecnico">Última confirmação: --</p>
-      </article>
-      <article class="cartao historico"><div class="cartao-topo"><h2>Histórico de eventos</h2><span class="simbolo" aria-hidden="true">🕓</span></div><p class="descricao">Alterações de estado e comandos registrados pelo servidor. Histórico em memória, limitado aos últimos 100 eventos.</p><ol id="lista-historico" class="eventos"><li class="sem-eventos">Aguardando eventos do ESP32.</li></ol></article>
-    </section>
-    <footer>Horta Inteligente · Projeto acadêmico de IoT · Limites demonstrativos: liga abaixo de 40%, desliga a partir de 70%, tempo máximo de 30s.</footer>
-  </main>
+  </div>
 </body>
 </html>

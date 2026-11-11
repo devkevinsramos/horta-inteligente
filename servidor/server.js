@@ -26,7 +26,7 @@ function carregarEnv(arquivo = path.join(__dirname, '.env')) {
 }
 
 const DISPOSITIVO = 'horta-esp32-01';
-const OFFLINE_MS = 8000;
+const OFFLINE_MS = 15000; // tolera atrasos temporarios de HTTPS/Wokwi
 const COMANDO_TTL_MS = 20000;
 const COMANDOS = new Set(['AUTO', 'MANUAL', 'LIGAR', 'DESLIGAR', 'RESET', 'FALHA', 'NORMAL']);
 const MIMES = { '/': 'text/html; charset=utf-8', '/index.html': 'text/html; charset=utf-8', '/style.css': 'text/css; charset=utf-8', '/script.js': 'application/javascript; charset=utf-8' };
@@ -89,7 +89,10 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
       typeof t.leitura_valida === 'boolean' &&
       (t.leitura_valida ? Number.isInteger(t.umidade) && t.umidade >= 0 && t.umidade <= 100 : t.umidade === null) &&
       ['manual','automatico'].includes(t.modo) &&
-      ['irrigando','bloqueio_tempo','falha_teste'].every(k => typeof t[k] === 'boolean');
+      ['irrigando','bloqueio_tempo','falha_teste'].every(k => typeof t[k] === 'boolean') &&
+      (t.tempo_maximo_ms === undefined || (Number.isInteger(t.tempo_maximo_ms) && t.tempo_maximo_ms >= 1000 && t.tempo_maximo_ms <= 600000)) &&
+      (t.tempo_restante_ms === undefined || (Number.isInteger(t.tempo_restante_ms) && t.tempo_restante_ms >= 0 && t.tempo_restante_ms <= (t.tempo_maximo_ms || 600000))) &&
+      (t.motivo_parada === undefined || (typeof t.motivo_parada === 'string' && /^[a-zA-Z0-9_]{1,72}$/.test(t.motivo_parada)));
   }
 
   return http.createServer(async (req, res) => {
@@ -119,7 +122,7 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
         const t = await jsonBody(req);
         if (!telemetriaValida(t)) return responder(res, 400, { erro: 'Telemetria invalida' });
         const antiga = telemetria;
-        telemetria = { tipo: 'telemetria', dispositivo: DISPOSITIVO, tempo_ms: t.tempo_ms, adc: t.adc, umidade: t.umidade, leitura_valida: t.leitura_valida, modo: t.modo, irrigando: t.irrigando, bloqueio_tempo: t.bloqueio_tempo, falha_teste: t.falha_teste };
+        telemetria = { tipo: 'telemetria', dispositivo: DISPOSITIVO, tempo_ms: t.tempo_ms, adc: t.adc, umidade: t.umidade, leitura_valida: t.leitura_valida, modo: t.modo, irrigando: t.irrigando, bloqueio_tempo: t.bloqueio_tempo, falha_teste: t.falha_teste, ...(t.tempo_maximo_ms !== undefined ? { tempo_maximo_ms: t.tempo_maximo_ms } : {}), ...(t.tempo_restante_ms !== undefined ? { tempo_restante_ms: t.tempo_restante_ms } : {}), ...(t.motivo_parada !== undefined ? { motivo_parada: t.motivo_parada } : {}) };
         recebidaEm = Date.now();
         if (!antiga) registrar('sistema', 'Primeira telemetria recebida do ESP32');
         else {
@@ -137,7 +140,12 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
         if (typeof body?.comando !== 'string' || !COMANDOS.has(body.comando)) return responder(res, 400, { erro: 'Comando nao permitido' });
         descartarExpirados();
         if (!online()) return responder(res, 409, { erro: 'ESP32 offline; comando nao enviado' });
-        if (fila.length >= 12) return responder(res, 429, { erro: 'Fila cheia' });
+        if (body.comando === 'DESLIGAR' && fila.length) {
+          for (const anterior of fila) registrar('alerta', `Comando ${anterior.comando} substituido pela parada`, anterior.id);
+          fila = []; // parada humana tem prioridade sobre comandos pendentes
+        } else if (fila.length) {
+          return responder(res, 409, { erro: 'Ha um comando em andamento. Aguarde a confirmacao antes de enviar outro.' });
+        }
         const item = { id: idProximo++, comando: body.comando, criadoEm: Date.now() };
         fila.push(item);
         ultimoComando = { id: item.id, comando: item.comando, situacao: 'pendente' };

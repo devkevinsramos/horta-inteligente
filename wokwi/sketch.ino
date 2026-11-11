@@ -10,7 +10,7 @@
   - O sistema automatico continua funcionando sem servidor.
   - O token e a URL devem ser configurados no arquivo config.h.
   - TLS setInsecure usado APENAS nesta demonstracao no Wokwi; sem verificacao do certificado.
-  - Os limites 40% e 70%, e o tempo de 30 s, sao valores demonstrativos.
+  - Os limites 40% e 70%, e o limite de 30 s, sao valores demonstrativos.
 */
 
 #include <Arduino.h>
@@ -31,7 +31,7 @@ constexpr uint8_t PINO_RELE = 26;          // Saida digital (GPIO26)
 constexpr int ADC_MAXIMO = 4095;          // Leitura ADC de 12 bits
 constexpr int LIMITE_LIGAR = 40;          // Liga se umidade < 40%
 constexpr int LIMITE_DESLIGAR = 70;       // Desliga se umidade >= 70%
-constexpr unsigned long TEMPO_MAXIMO_MS = 30000UL;  // 30 segundos demonstrativos
+constexpr unsigned long TEMPO_MAXIMO_MS = 30000UL; // 30 segundos: protecao contra acionamento continuo
 constexpr unsigned long LEITURA_INTERVALO_MS = 250UL;
 constexpr unsigned long TELEMETRIA_INTERVALO_MS = 1500UL;
 
@@ -44,6 +44,7 @@ bool solicitacaoManual = false;
 bool bloqueioPorTempo = false;
 bool falhaSensorSimulada = false;  // Injetada APENAS para demonstracao no Serial
 bool leituraValida = false;
+const char* ultimoMotivoParada = "nao_iniciada";
 int leituraAdc = 0;
 int umidadePercentual = -1;
 unsigned long inicioIrrigacaoMs = 0;
@@ -83,6 +84,7 @@ void definirIrrigacao(bool ligar, const char* motivo) {
   digitalWrite(PINO_RELE, ligar ? HIGH : LOW);
   irrigando = ligar;
   if (ligar) inicioIrrigacaoMs = millis();
+  else ultimoMotivoParada = motivo;
   registrarEvento(motivo);
 }
 
@@ -166,7 +168,13 @@ void emitirTelemetria() {
   Serial.print(bloqueioPorTempo ? "true" : "false");
   Serial.print(",\"falha_teste\":");
   Serial.print(falhaSensorSimulada ? "true" : "false");
-  Serial.println("}");
+  Serial.print(",\"tempo_maximo_ms\":");
+  Serial.print(TEMPO_MAXIMO_MS);
+  Serial.print(",\"tempo_restante_ms\":");
+  Serial.print(irrigando ? (TEMPO_MAXIMO_MS > millis() - inicioIrrigacaoMs ? TEMPO_MAXIMO_MS - (millis() - inicioIrrigacaoMs) : 0) : 0);
+  Serial.print(",\"motivo_parada\":\"");
+  Serial.print(ultimoMotivoParada);
+  Serial.println("\"}");
 }
 
 // Ponto de entrada dos comandos. A mesma rotina sera utilizada na Etapa 2
@@ -184,16 +192,16 @@ bool aplicarComando(const char* comando) {
     solicitacaoManual = false;
     registrarEvento("modo_manual");
   } else if (strcmp(comando, "LIGAR") == 0) {
-    if (modo != ModoOperacao::MANUAL) {
-      registrarEvento("comando_ligar_rejeitado_modo_automatico");
-      aceito = false;
-    } else if (!leituraValida || bloqueioPorTempo ||
-               umidadePercentual >= LIMITE_DESLIGAR) {
+    // Acionamento em um unico clique: LIGAR seleciona MANUAL e solicita
+    // irrigacao somente quando as protecoes locais permitem.
+    if (!leituraValida || bloqueioPorTempo ||
+        umidadePercentual >= LIMITE_DESLIGAR) {
       registrarEvento("comando_ligar_rejeitado_seguranca");
       aceito = false;
     } else {
+      modo = ModoOperacao::MANUAL;
       solicitacaoManual = true;
-      registrarEvento("comando_ligar_aceito");
+      registrarEvento("comando_ligar_manual_aceito");
     }
   } else if (strcmp(comando, "DESLIGAR") == 0) {
     // Parada humana sempre tem prioridade. Sai do automatico para
@@ -285,7 +293,13 @@ String gerarTelemetriaJson() {
   mensagem += bloqueioPorTempo ? "true" : "false";
   mensagem += ",\"falha_teste\":";
   mensagem += falhaSensorSimulada ? "true" : "false";
-  mensagem += '}';
+  mensagem += ",\"tempo_maximo_ms\":";
+  mensagem += String(TEMPO_MAXIMO_MS);
+  mensagem += ",\"tempo_restante_ms\":";
+  mensagem += String(irrigando ? (TEMPO_MAXIMO_MS > millis() - inicioIrrigacaoMs ? TEMPO_MAXIMO_MS - (millis() - inicioIrrigacaoMs) : 0) : 0);
+  mensagem += ",\"motivo_parada\":\"";
+  mensagem += ultimoMotivoParada;
+  mensagem += "\"}";
   return mensagem;
 }
 
@@ -390,6 +404,7 @@ void setup() {
   solicitacaoManual = false;
   bloqueioPorTempo = false;
   falhaSensorSimulada = false;
+  ultimoMotivoParada = "nao_iniciada";
   tamanhoComando = 0;
   ultimaLeituraMs = millis();
   ultimaTelemetriaMs = millis();
