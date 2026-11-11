@@ -4,4 +4,4 @@ constexpr char URL_SERVIDOR[] =
   "https://horta-inteligente-6woq.onrender.com";
 
 constexpr char TOKEN_DISPOSITIVO[] =
-  "ab360fd3aed9c2d21b7d75263df66675f8734c1fdbaf0c98b17bab42fc706118";
+  "6aa98c2f7182c14cec1aaed68c59c93030e7cc120369150b31b3bbb47bd8f8a5";
