@@ -69,6 +69,7 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
   let idProximo = 1;
   let ultimoComando = null;
   let historico = [];
+  const requisicoesRecebidas = new Map(); // evita comandos duplicados apos resposta HTTP perdida
   function registrar(tipo, descricao, id) {
     historico.unshift({ data: new Date().toISOString(), tipo, descricao, ...(id ? { id } : {}) });
     if (historico.length > 100) historico = historico.slice(0, 100);
@@ -77,7 +78,7 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
   function confirmarPendente(item, situacao, fonte) {
     if (!fila.length || fila[0].id !== item.id) return false;
     fila.shift();
-    ultimoComando = { id: item.id, comando: item.comando, situacao, fonte };
+    ultimoComando = { id: item.id, comando: item.comando, situacao, fonte, requisicaoId: item.requisicaoId || null };
     const verbo = situacao === 'reconhecido' ? 'confirmado' : 'rejeitado';
     registrar('confirmacao', `Comando ${item.comando} ${verbo} (${fonte})`, item.id);
     return true;
@@ -98,9 +99,13 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
     const agora = Date.now();
     const perdidos = fila.filter(x => agora - x.criadoEm > COMANDO_TTL_MS);
     fila = fila.filter(x => agora - x.criadoEm <= COMANDO_TTL_MS);
+    // Guarda chaves somente pelo periodo necessario para recuperar respostas perdidas.
+    for (const [chave, valor] of requisicoesRecebidas) {
+      if (agora - valor.criadoEm > 120000) requisicoesRecebidas.delete(chave);
+    }
     for (const x of perdidos) {
       registrar('alerta', `Comando ${x.comando} expirou sem confirmacao`, x.id);
-      ultimoComando = { id: x.id, comando: x.comando, situacao: 'expirado', fonte: 'timeout' };
+      ultimoComando = { id: x.id, comando: x.comando, situacao: 'expirado', fonte: 'timeout', requisicaoId: x.requisicaoId || null };
     }
   }
   function telemetriaValida(t) {
@@ -139,7 +144,7 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
           telemetria, comandosPendentes: fila.length, ultimoComando,
           canalControleAtivo: Boolean(ultimaConsultaComandoEm && Date.now() - ultimaConsultaComandoEm < OFFLINE_MS),
           comandoPendente: aguardando ? {
-            id: aguardando.id, comando: aguardando.comando,
+            id: aguardando.id, comando: aguardando.comando, requisicaoId: aguardando.requisicaoId || null,
             segundosRestantes: Math.max(0, Math.ceil((COMANDO_TTL_MS - (Date.now() - aguardando.criadoEm)) / 1000))
           } : null
         });
@@ -174,13 +179,25 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
         if (!autenticar(req.headers['x-control-token'], controlToken)) return responder(res, 401, { erro: 'Token de controle incorreto' });
         const body = await jsonBody(req);
         if (typeof body?.comando !== 'string' || !COMANDOS.has(body.comando)) return responder(res, 400, { erro: 'Comando nao permitido' });
+        // ID opcional gerado pelo painel. Permite consultar o status quando a resposta HTTP se perder.
+        if (body.requisicaoId !== undefined && (typeof body.requisicaoId !== 'string' || !/^[a-zA-Z0-9_-]{8,90}$/.test(body.requisicaoId)))
+          return responder(res, 400, { erro: 'Identificador de requisicao invalido' });
         descartarExpirados();
+        if (body.requisicaoId) {
+          const repetido = requisicoesRecebidas.get(body.requisicaoId);
+          if (repetido) {
+            if (repetido.comando !== body.comando) return responder(res, 409, { erro: 'Identificador ja usado para outro comando' });
+            const atual = fila.find(x => x.id === repetido.id);
+            const situacao = atual ? 'pendente' : ultimoComando?.id === repetido.id ? ultimoComando.situacao : 'processado';
+            return responder(res, 200, { id: repetido.id, comando: repetido.comando, requisicaoId: body.requisicaoId, situacao, duplicado: true });
+          }
+        }
         if (!online()) return responder(res, 409, { erro: 'ESP32 offline; comando nao enviado' });
         if (fila.length) {
           const anterior = fila[0];
           // Repetir o mesmo comando e seguro: devolve o id em vez de bloquear o painel.
           if (anterior.comando === body.comando) {
-            return responder(res, 202, { id: anterior.id, comando: anterior.comando, situacao: 'pendente', aviso: 'Comando ja aguardando confirmacao' });
+            return responder(res, 202, { id: anterior.id, comando: anterior.comando, requisicaoId: anterior.requisicaoId || null, situacao: 'pendente', aviso: 'Comando ja aguardando confirmacao' });
           }
           if (body.comando === 'DESLIGAR' || body.comando === 'RESET') {
             // A parada e o rearme nao podem ficar presos atras de outra operacao.
@@ -194,11 +211,12 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
             });
           }
         }
-        const item = { id: idProximo++, comando: body.comando, criadoEm: Date.now() };
+        const item = { id: idProximo++, comando: body.comando, criadoEm: Date.now(), requisicaoId: body.requisicaoId || null };
+        if (item.requisicaoId) requisicoesRecebidas.set(item.requisicaoId, { id: item.id, comando: item.comando, criadoEm: item.criadoEm });
         fila.push(item);
-        ultimoComando = { id: item.id, comando: item.comando, situacao: 'pendente' };
+        ultimoComando = { id: item.id, comando: item.comando, situacao: 'pendente', requisicaoId: item.requisicaoId };
         registrar('comando', `Comando ${item.comando} solicitado pelo painel`, item.id);
-        return responder(res, 202, { id: item.id, comando: item.comando, situacao: 'pendente', aviso: 'Aguardando confirmacao do ESP32' });
+        return responder(res, 202, { id: item.id, comando: item.comando, requisicaoId: item.requisicaoId, situacao: 'pendente', aviso: 'Aguardando confirmacao do ESP32' });
       }
       if (metodo === 'GET' && pathname === '/api/device/next-command') {
         descartarExpirados();

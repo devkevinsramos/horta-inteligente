@@ -56,14 +56,43 @@ $('atualizar-resumo').addEventListener('click', () => atualizar());
 
 async function api(url, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
+  const limiteMs = options.method === 'POST' ? 18000 : 12000;
+  const timeout = setTimeout(() => controller.abort(), limiteMs);
   try {
     const resposta = await fetch(url, { cache: 'no-store', signal: controller.signal, ...options });
-    const dados = await resposta.json();
-    if (!resposta.ok) throw new Error(dados.erro || `Erro HTTP ${resposta.status}`);
+    // Nao chamar response.json() diretamente: Render/proxy pode enviar corpo vazio.
+    const corpo = await resposta.text();
+    let dados = null;
+    if (corpo.trim()) {
+      try { dados = JSON.parse(corpo); }
+      catch {
+        const erro = new Error(`Servidor retornou HTTP ${resposta.status} com resposta que nao e JSON. Confira o deploy e os logs do Render.`);
+        erro.respostaIncerta = true;
+        throw erro;
+      }
+    }
+    if (!dados || typeof dados !== 'object' || Array.isArray(dados)) {
+      const erro = new Error(`Servidor retornou HTTP ${resposta.status} sem JSON. Confira o deploy e os logs do Render.`);
+      erro.respostaIncerta = true;
+      throw erro;
+    }
+    if (!resposta.ok) {
+      const erro = new Error(dados.erro || `Erro HTTP ${resposta.status}`);
+      erro.status = resposta.status;
+      throw erro;
+    }
     return dados;
   } catch (erro) {
-    if (erro.name === 'AbortError') throw new Error('Servidor demorou para responder. Confira o Render.');
+    if (erro.name === 'AbortError') {
+      const falha = new Error('Servidor demorou para responder. Confira o Render e o Monitor Serial do Wokwi.');
+      falha.respostaIncerta = true;
+      throw falha;
+    }
+    if (erro instanceof TypeError) {
+      const falha = new Error('Falha de rede ao acessar o servidor. Verifique o Render.');
+      falha.respostaIncerta = true;
+      throw falha;
+    }
     throw erro;
   } finally { clearTimeout(timeout); }
 }
@@ -210,9 +239,11 @@ async function atualizar() {
   if (atualizando) return;
   atualizando = true;
   try {
-    const [s, h] = await Promise.all([api('/api/status'), api('/api/historico')]);
-    renderizarStatus(s);
-    renderizarEventos(h.eventos || []);
+    const [s, h] = await Promise.allSettled([api('/api/status'), api('/api/historico')]);
+    if (s.status === 'rejected') throw s.reason;
+    renderizarStatus(s.value);
+    // Um erro isolado no historico nao deve marcar um ESP32 conectado como offline.
+    if (h.status === 'fulfilled') renderizarEventos(h.value.eventos || []);
   } catch (erro) {
     renderizarStatus({ conectado: false, telemetria: null, ultimaAtualizacao: statusAtual?.ultimaAtualizacao, comandosPendentes: 0, ultimoComando: statusAtual?.ultimoComando });
     alerta('notice-error', `Não foi possível consultar a API: ${erro.message}`);
@@ -226,17 +257,41 @@ async function enviar(comando) {
   enviando = true;
   atualizarDisponibilidade();
   informar(`Enviando ${comando}…`);
+  const requisicaoId = `horta_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
   try {
     const resposta = await api('/api/commands', {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-control-token': token },
-      body: JSON.stringify({ comando })
+      body: JSON.stringify({ comando, requisicaoId })
     });
+    if (!Number.isInteger(resposta.id) || resposta.id < 1) throw new Error('Servidor nao retornou um identificador de comando valido.');
     comandoAguardadoId = resposta.id;
     informar(`${comando} enviado (#${resposta.id}). Aguardando confirmação do ESP32…`);
     // O ACK pode chegar alguns segundos após o HTTP 202.
     await atualizar();
   } catch (erro) {
-    informar(`Não foi possível executar ${comando}: ${erro.message}`, 'error');
+    // Uma resposta HTTP vazia nao significa necessariamente que o comando falhou.
+    // Nunca reenviar automaticamente um LIGAR, RESET ou AUTO: consultar o estado primeiro.
+    if (erro.respostaIncerta) {
+      informar(`Resposta de ${comando} não recebida. Consultando o estado no servidor…`);
+      try {
+        const estado = await api('/api/status');
+        renderizarStatus(estado);
+        const associado = [estado.comandoPendente, estado.ultimoComando].find(x => x?.requisicaoId === requisicaoId);
+        if (associado) {
+          comandoAguardadoId = associado.situacao === 'reconhecido' ? null : associado.id;
+          informar(associado.situacao === 'reconhecido'
+            ? `${comando} confirmado pelo ESP32 (resposta original interrompida).`
+            : `${comando} recebido pelo servidor (#${associado.id}). Aguarde confirmação do ESP32.`,
+            associado.situacao === 'reconhecido' ? 'ok' : '');
+        } else {
+          informar(`${comando}: o servidor não confirmou o recebimento. Não repita imediatamente; consulte Sistema/Histórico e os logs do Render. ${erro.message}`, 'error');
+        }
+      } catch (consultaErro) {
+        informar(`${comando}: resposta da API interrompida e não foi possível verificar o resultado. Confira Render → Logs antes de repetir. ${consultaErro.message}`, 'error');
+      }
+    } else {
+      informar(`Não foi possível executar ${comando}: ${erro.message}`, 'error');
+    }
   } finally { enviando = false; atualizarDisponibilidade(); }
 }
 comandos.forEach(button => button.addEventListener('click', () => enviar(button.dataset.comando)));
