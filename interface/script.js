@@ -77,7 +77,9 @@ function atualizarDisponibilidade() {
   const t = disponivel ? statusAtual?.telemetria : null;
   comandos.forEach(botao => {
     const acao = botao.dataset.comando;
-    let bloqueado = !disponivel || enviando;
+    const pendente = statusAtual?.comandoPendente;
+    // RESET e DESLIGAR sempre podem substituir um comando pendente.
+    let bloqueado = !disponivel || enviando || (pendente && !['DESLIGAR', 'RESET'].includes(acao) && pendente.comando !== acao);
     // O firmware rejeita LIGAR em condicoes inseguras: antecipe essa verificacao.
     if (acao === 'LIGAR' && t && (!t.leitura_valida || t.bloqueio_tempo || t.umidade >= 70)) bloqueado = true;
     // Nao permite reset com sensor invalido (o ESP32 tambem nao permite).
@@ -148,6 +150,10 @@ function renderizarStatus(dados) {
   texto('sistema-atualizacao', formatarData(dados.ultimaAtualizacao));
   texto('sistema-adc', t ? t.adc : '—');
   texto('sistema-pendentes', dados.comandosPendentes ?? 0);
+  const pendente = dados.comandoPendente;
+  if (pendente && !comandoAguardadoId) {
+    informar(`Comando ${pendente.comando} aguardando confirmação do ESP32 (até ${pendente.segundosRestantes}s). Você pode Parar ou Rearmar.`, '');
+  }
   texto('sistema-comando', dados.ultimoComando?.comando || 'Nenhum');
   texto('sistema-confirmacao', dados.ultimoComando?.situacao || '—');
   texto('sistema-modo', nomeModo);
@@ -162,6 +168,8 @@ function renderizarStatus(dados) {
 
   if (!disponivel) {
     alerta('notice-error', dados.ultimaAtualizacao ? `ESP32 desconectado. Último contato: ${formatarData(dados.ultimaAtualizacao)}. Inicie o Wokwi e confira os tokens.` : 'Sem telemetria do ESP32. Inicie a simulação no Wokwi e confirme a conexão com o Render.');
+  } else if (!dados.canalControleAtivo) {
+    alerta('notice-warning', 'O ESP32 envia telemetria, mas não está consultando comandos. Atualize o sketch.ino no Wokwi, mantenha a simulação ligada e confira o Monitor Serial.');
   } else if (!t.leitura_valida) {
     alerta('notice-error', 'Sensor inválido: o ESP32 mantém a irrigação desligada. Use Restaurar sensor se a falha foi simulada.');
   } else if (t.bloqueio_tempo) {

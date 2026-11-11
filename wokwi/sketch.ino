@@ -22,6 +22,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <esp_timer.h>
 #include "config.h"
 #endif
 
@@ -62,6 +63,14 @@ unsigned long ultimaTentativaWifiMs = 0;
 unsigned long ultimoComandoProcessadoId = 0;
 bool ultimoComandoAceito = false;
 bool wifiAnteriormenteConectado = false;
+// Timer independente das requisicoes HTTPS: o rele desliga fisicamente
+// em 30 s mesmo quando o loop estiver bloqueado aguardando a rede.
+esp_timer_handle_t temporizadorCorte = nullptr;
+volatile bool cortePorTempoAssincrono = false;
+void desligarReleNoLimite(void*) {
+  digitalWrite(PINO_RELE, LOW);
+  cortePorTempoAssincrono = true;
+}
 #endif
 
 const char* nomeModo() {
@@ -83,8 +92,18 @@ void definirIrrigacao(bool ligar, const char* motivo) {
 
   digitalWrite(PINO_RELE, ligar ? HIGH : LOW);
   irrigando = ligar;
-  if (ligar) inicioIrrigacaoMs = millis();
-  else ultimoMotivoParada = motivo;
+  if (ligar) {
+    inicioIrrigacaoMs = millis();
+#if defined(ARDUINO_ARCH_ESP32)
+    cortePorTempoAssincrono = false;
+    if (temporizadorCorte) esp_timer_start_once(temporizadorCorte, TEMPO_MAXIMO_MS * 1000ULL);
+#endif
+  } else {
+#if defined(ARDUINO_ARCH_ESP32)
+    if (temporizadorCorte) esp_timer_stop(temporizadorCorte);
+#endif
+    ultimoMotivoParada = motivo;
+  }
   registrarEvento(motivo);
 }
 
@@ -106,6 +125,16 @@ void atualizarSensor() {
 
 // Mantem irrigacao local, independente de interface web ou internet.
 void aplicarRegras() {
+#if defined(ARDUINO_ARCH_ESP32)
+  if (cortePorTempoAssincrono) {
+    cortePorTempoAssincrono = false;
+    bloqueioPorTempo = true;
+    solicitacaoManual = false;
+    definirIrrigacao(false, "tempo_maximo_atingido");
+    registrarEvento("irrigacao_bloqueada_ate_RESET");
+    return;
+  }
+#endif
   if (!leituraValida) {
     solicitacaoManual = false;
     definirIrrigacao(false, "sensor_invalido");
@@ -309,7 +338,7 @@ int postarJson(const char* rota, const String& corpo) {
   WiFiClientSecure cliente;
   cliente.setInsecure();
   HTTPClient http;
-  http.setTimeout(2000);
+  http.setTimeout(7000);
   if (!http.begin(cliente, urlEndpoint(rota))) return -1;
   http.addHeader("Content-Type", "application/json");
   http.addHeader("x-device-token", TOKEN_DISPOSITIVO);
@@ -331,7 +360,7 @@ void consultarComandoServidor() {
   WiFiClientSecure cliente;
   cliente.setInsecure();
   HTTPClient http;
-  http.setTimeout(2000);
+  http.setTimeout(7000);
   if (!http.begin(cliente, urlEndpoint("/api/device/next-command"))) return;
   http.addHeader("x-device-token", TOKEN_DISPOSITIVO);
   int codigo = http.GET();
@@ -355,7 +384,6 @@ void consultarComandoServidor() {
   if (id != ultimoComandoProcessadoId) {
     ultimoComandoAceito = aplicarComando(recebido);
     ultimoComandoProcessadoId = id;
-    enviarTelemetriaServidor();  // atualiza painel logo apos executar
   }
   const String ack = String("{\"id\":") + String(id) +
     String(",\"resultado\":\"") + (ultimoComandoAceito ? "aceito" : "rejeitado") + "\"}";
@@ -363,6 +391,9 @@ void consultarComandoServidor() {
   if (respostaAck != 200) {
     Serial.printf("{\"tipo\":\"rede\",\"acao\":\"ack\",\"http\":%d}\n", respostaAck);
   }
+  // Mesmo se o ACK falhar, a telemetria permite ao servidor confirmar
+  // o estado aplicado, evitando que a fila trave indefinidamente.
+  enviarTelemetriaServidor();
 }
 
 void gerenciarRede() {
@@ -409,6 +440,15 @@ void setup() {
   ultimaLeituraMs = millis();
   ultimaTelemetriaMs = millis();
   atualizarSensor();
+#if defined(ARDUINO_ARCH_ESP32)
+  esp_timer_create_args_t dadosTimer = {};
+  dadosTimer.callback = &desligarReleNoLimite;
+  dadosTimer.dispatch_method = ESP_TIMER_TASK;
+  dadosTimer.name = "corte_irrigacao";
+  if (esp_timer_create(&dadosTimer, &temporizadorCorte) != ESP_OK) {
+    registrarEvento("erro_timer_fisico");
+  }
+#endif
 
   registrarEvento("inicializacao_segura");
   registrarEvento("comandos_AUTO_MANUAL_LIGAR_DESLIGAR_RESET_FALHA_NORMAL_STATUS");

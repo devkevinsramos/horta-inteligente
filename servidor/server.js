@@ -26,8 +26,8 @@ function carregarEnv(arquivo = path.join(__dirname, '.env')) {
 }
 
 const DISPOSITIVO = 'horta-esp32-01';
-const OFFLINE_MS = 15000; // tolera atrasos temporarios de HTTPS/Wokwi
-const COMANDO_TTL_MS = 20000;
+const OFFLINE_MS = 30000; // tolera atrasos ocasionais do Wokwi/Render
+const COMANDO_TTL_MS = 30000; // remove comandos sem confirmacao apos 30s
 const COMANDOS = new Set(['AUTO', 'MANUAL', 'LIGAR', 'DESLIGAR', 'RESET', 'FALHA', 'NORMAL']);
 const MIMES = { '/': 'text/html; charset=utf-8', '/index.html': 'text/html; charset=utf-8', '/style.css': 'text/css; charset=utf-8', '/script.js': 'application/javascript; charset=utf-8' };
 
@@ -64,6 +64,7 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
 
   let telemetria = null;
   let recebidaEm = 0;
+  let ultimaConsultaComandoEm = 0;
   let fila = [];
   let idProximo = 1;
   let ultimoComando = null;
@@ -73,13 +74,33 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
     if (historico.length > 100) historico = historico.slice(0, 100);
   }
   function online() { return Boolean(recebidaEm && Date.now() - recebidaEm < OFFLINE_MS); }
+  function confirmarPendente(item, situacao, fonte) {
+    if (!fila.length || fila[0].id !== item.id) return false;
+    fila.shift();
+    ultimoComando = { id: item.id, comando: item.comando, situacao, fonte };
+    const verbo = situacao === 'reconhecido' ? 'confirmado' : 'rejeitado';
+    registrar('confirmacao', `Comando ${item.comando} ${verbo} (${fonte})`, item.id);
+    return true;
+  }
+  // Se o ACK HTTP se perdeu mas o ESP32 comunicou o novo estado DEPOIS
+  // de consultar o comando, a propria telemetria comprova sua execucao.
+  function correspondeAoComando(comando, t) {
+    if (comando === 'AUTO') return t.modo === 'automatico';
+    if (comando === 'MANUAL') return t.modo === 'manual' && !t.irrigando;
+    if (comando === 'LIGAR') return t.modo === 'manual' && t.irrigando;
+    if (comando === 'DESLIGAR') return t.modo === 'manual' && !t.irrigando;
+    if (comando === 'RESET') return !t.bloqueio_tempo;
+    if (comando === 'FALHA') return t.falha_teste && !t.leitura_valida;
+    if (comando === 'NORMAL') return !t.falha_teste && t.leitura_valida;
+    return false;
+  }
   function descartarExpirados() {
     const agora = Date.now();
     const perdidos = fila.filter(x => agora - x.criadoEm > COMANDO_TTL_MS);
     fila = fila.filter(x => agora - x.criadoEm <= COMANDO_TTL_MS);
     for (const x of perdidos) {
       registrar('alerta', `Comando ${x.comando} expirou sem confirmacao`, x.id);
-      ultimoComando = { id: x.id, comando: x.comando, situacao: 'expirado' };
+      ultimoComando = { id: x.id, comando: x.comando, situacao: 'expirado', fonte: 'timeout' };
     }
   }
   function telemetriaValida(t) {
@@ -111,7 +132,17 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
       if (metodo === 'GET' && pathname === '/api/health') return responder(res, 200, { ok: true, servidor: 'horta-inteligente' });
       if (metodo === 'GET' && pathname === '/api/status') {
         descartarExpirados();
-        return responder(res, 200, { dispositivo: DISPOSITIVO, conectado: online(), ultimaAtualizacao: recebidaEm ? new Date(recebidaEm).toISOString() : null, telemetria, comandosPendentes: fila.length, ultimoComando });
+        const aguardando = fila[0];
+        return responder(res, 200, {
+          dispositivo: DISPOSITIVO, conectado: online(),
+          ultimaAtualizacao: recebidaEm ? new Date(recebidaEm).toISOString() : null,
+          telemetria, comandosPendentes: fila.length, ultimoComando,
+          canalControleAtivo: Boolean(ultimaConsultaComandoEm && Date.now() - ultimaConsultaComandoEm < OFFLINE_MS),
+          comandoPendente: aguardando ? {
+            id: aguardando.id, comando: aguardando.comando,
+            segundosRestantes: Math.max(0, Math.ceil((COMANDO_TTL_MS - (Date.now() - aguardando.criadoEm)) / 1000))
+          } : null
+        });
       }
       if (metodo === 'GET' && pathname === '/api/historico') return responder(res, 200, { eventos: historico });
 
@@ -119,11 +150,16 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
         if (!autenticar(req.headers['x-device-token'], deviceToken)) return responder(res, 401, { erro: 'Dispositivo nao autorizado' });
       }
       if (metodo === 'POST' && pathname === '/api/device/telemetry') {
+        descartarExpirados();
         const t = await jsonBody(req);
         if (!telemetriaValida(t)) return responder(res, 400, { erro: 'Telemetria invalida' });
         const antiga = telemetria;
         telemetria = { tipo: 'telemetria', dispositivo: DISPOSITIVO, tempo_ms: t.tempo_ms, adc: t.adc, umidade: t.umidade, leitura_valida: t.leitura_valida, modo: t.modo, irrigando: t.irrigando, bloqueio_tempo: t.bloqueio_tempo, falha_teste: t.falha_teste, ...(t.tempo_maximo_ms !== undefined ? { tempo_maximo_ms: t.tempo_maximo_ms } : {}), ...(t.tempo_restante_ms !== undefined ? { tempo_restante_ms: t.tempo_restante_ms } : {}), ...(t.motivo_parada !== undefined ? { motivo_parada: t.motivo_parada } : {}) };
         recebidaEm = Date.now();
+        const pendente = fila[0];
+        if (pendente?.entregueEm && recebidaEm >= pendente.entregueEm && correspondeAoComando(pendente.comando, t)) {
+          confirmarPendente(pendente, 'reconhecido', 'telemetria');
+        }
         if (!antiga) registrar('sistema', 'Primeira telemetria recebida do ESP32');
         else {
           if (antiga.irrigando !== t.irrigando) registrar('irrigacao', t.irrigando ? 'Irrigacao ligada' : 'Irrigacao desligada');
@@ -140,11 +176,23 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
         if (typeof body?.comando !== 'string' || !COMANDOS.has(body.comando)) return responder(res, 400, { erro: 'Comando nao permitido' });
         descartarExpirados();
         if (!online()) return responder(res, 409, { erro: 'ESP32 offline; comando nao enviado' });
-        if (body.comando === 'DESLIGAR' && fila.length) {
-          for (const anterior of fila) registrar('alerta', `Comando ${anterior.comando} substituido pela parada`, anterior.id);
-          fila = []; // parada humana tem prioridade sobre comandos pendentes
-        } else if (fila.length) {
-          return responder(res, 409, { erro: 'Ha um comando em andamento. Aguarde a confirmacao antes de enviar outro.' });
+        if (fila.length) {
+          const anterior = fila[0];
+          // Repetir o mesmo comando e seguro: devolve o id em vez de bloquear o painel.
+          if (anterior.comando === body.comando) {
+            return responder(res, 202, { id: anterior.id, comando: anterior.comando, situacao: 'pendente', aviso: 'Comando ja aguardando confirmacao' });
+          }
+          if (body.comando === 'DESLIGAR' || body.comando === 'RESET') {
+            // A parada e o rearme nao podem ficar presos atras de outra operacao.
+            registrar('alerta', `Comando ${anterior.comando} substituido por ${body.comando}`, anterior.id);
+            fila = [];
+          } else {
+            const restantes = Math.max(0, Math.ceil((COMANDO_TTL_MS - (Date.now() - anterior.criadoEm)) / 1000));
+            return responder(res, 409, {
+              erro: `Comando ${anterior.comando} aguardando ESP32 (ate ${restantes}s). Use Parar ou Rearmar se necessario.`,
+              comandoPendente: anterior.comando, segundosRestantes: restantes
+            });
+          }
         }
         const item = { id: idProximo++, comando: body.comando, criadoEm: Date.now() };
         fila.push(item);
@@ -154,16 +202,22 @@ function criarServidor({ deviceToken = process.env.DEVICE_TOKEN, controlToken = 
       }
       if (metodo === 'GET' && pathname === '/api/device/next-command') {
         descartarExpirados();
+        ultimaConsultaComandoEm = Date.now();
+        if (fila.length && !fila[0].entregueEm) fila[0].entregueEm = Date.now();
         return responder(res, 200, fila.length ? { id: fila[0].id, comando: fila[0].comando } : { id: 0, comando: null });
       }
       if (metodo === 'POST' && pathname === '/api/device/ack') {
         const body = await jsonBody(req);
         descartarExpirados();
         if (!Number.isInteger(body?.id) || body.id < 1 || !['aceito', 'rejeitado'].includes(body.resultado)) return responder(res, 400, { erro: 'Confirmacao invalida' });
-        if (!fila.length || fila[0].id !== body.id) return responder(res, 409, { erro: 'Comando desconhecido ou expirado' });
-        const item = fila.shift();
-        ultimoComando = { id: item.id, comando: item.comando, situacao: body.resultado === 'aceito' ? 'reconhecido' : 'rejeitado' };
-        registrar('confirmacao', `ESP32 ${body.resultado === 'aceito' ? 'aceitou' : 'rejeitou'} o comando ${item.comando}`, item.id);
+        // ACK de comando ja comprovado por telemetria: resposta idempotente.
+        if (!fila.length || fila[0].id !== body.id) {
+          if (ultimoComando?.id === body.id && ultimoComando.situacao === 'reconhecido')
+            return responder(res, 200, { ok: true, duplicado: true });
+          return responder(res, 409, { erro: 'Comando desconhecido, substituido ou expirado' });
+        }
+        const item = fila[0];
+        confirmarPendente(item, body.resultado === 'aceito' ? 'reconhecido' : 'rejeitado', 'ack');
         return responder(res, 200, { ok: true });
       }
       return responder(res, 404, { erro: 'Rota nao encontrada' });
